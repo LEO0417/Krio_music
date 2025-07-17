@@ -98,6 +98,17 @@ local-music-generator/
 - Audio processing utilities are in the `backend/audio` directory
 - Configuration settings are in the `backend/config` directory
 
+#### API Framework Features
+
+- Comprehensive error handling with standardized error responses
+- Resource monitoring middleware to track CPU, memory, and disk usage
+- Request validation middleware for early validation of JSON payloads
+- Detailed request logging with timing information
+- CORS configuration with specific headers and methods
+- OpenAPI documentation customization
+- Health check and system monitoring endpoints
+- Graceful startup and shutdown procedures
+
 ### Frontend Development
 
 - React components are in the `frontend/src/components` directory
