@@ -255,48 +255,7 @@ async def get_model_info():
         Dict: 模型配置和能力信息
     """
     try:
-        status_info = model_manager.get_model_status()
-        
-        # 基础信息
-        model_info = {
-            "current_model": status_info,
-            "supported_models": [
-                "facebook/musicgen-small",
-                "facebook/musicgen-medium", 
-                "facebook/musicgen-large"
-            ],
-            "capabilities": {
-                "max_duration": 30,  # seconds
-                "sample_rate": 32000,
-                "supported_formats": ["wav", "mp3"],
-                "text_conditioning": True,
-                "unconditional_generation": True
-            },
-            "system_requirements": {
-                "min_ram_gb": 4,
-                "recommended_ram_gb": 8,
-                "gpu_memory_gb": 4,
-                "disk_space_gb": 5
-            }
-        }
-        
-        # 如果模型已加载，添加更多详细信息
-        if model_manager.is_ready():
-            model_info["model_details"] = {
-                "is_ready": True,
-                "can_generate": True,
-                "current_device": status_info["device"],
-                "memory_usage_mb": status_info["memory_usage_mb"],
-                "inference_count": status_info["inference_count"]
-            }
-        else:
-            model_info["model_details"] = {
-                "is_ready": False,
-                "can_generate": False,
-                "status": status_info["status"],
-                "error": status_info.get("error_message")
-            }
-        
+        model_info = model_manager.get_all_model_info()
         return model_info
         
     except Exception as e:
@@ -396,4 +355,143 @@ async def get_model_logs(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to get model logs: {str(e)}"
+        )
+
+@router.get("/config/{model_name}")
+async def get_model_config(model_name: str):
+    """
+    获取指定模型的配置信息
+    
+    Args:
+        model_name: 模型名称
+        
+    Returns:
+        Dict: 模型配置信息
+    """
+    try:
+        config_info = model_manager.get_model_configuration(model_name)
+        
+        if "error" in config_info:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=config_info["error"]
+            )
+        
+        return config_info
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting model config: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get model configuration: {str(e)}"
+        )
+
+@router.get("/cache")
+async def get_cache_info():
+    """
+    获取模型缓存信息
+    
+    Returns:
+        Dict: 缓存统计信息
+    """
+    try:
+        cache_info = model_manager.get_cache_statistics()
+        return cache_info
+        
+    except Exception as e:
+        logger.error(f"Error getting cache info: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get cache information: {str(e)}"
+        )
+
+@router.delete("/cache")
+async def clear_cache(
+    model_name: Optional[str] = Query(
+        default=None,
+        description="要清理的模型名称，不指定则清理所有缓存"
+    )
+):
+    """
+    清理模型缓存
+    
+    Args:
+        model_name: 要清理的模型名称
+        
+    Returns:
+        Dict: 清理结果
+    """
+    try:
+        success = model_manager.clear_model_cache(model_name)
+        
+        if success:
+            message = f"Cache cleared for model: {model_name}" if model_name else "All caches cleared"
+            return {
+                "message": message,
+                "success": True,
+                "cleared_model": model_name
+            }
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to clear cache"
+            )
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error clearing cache: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to clear cache: {str(e)}"
+        )
+
+@router.get("/validate/{model_name}")
+async def validate_model(model_name: str):
+    """
+    验证模型系统要求
+    
+    Args:
+        model_name: 模型名称
+        
+    Returns:
+        Dict: 验证结果
+    """
+    try:
+        from config.settings import validate_model_requirements
+        
+        validation_result = validate_model_requirements(model_name)
+        return validation_result
+        
+    except Exception as e:
+        logger.error(f"Error validating model: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to validate model: {str(e)}"
+        )
+
+@router.get("/supported")
+async def get_supported_models():
+    """
+    获取支持的模型列表
+    
+    Returns:
+        Dict: 支持的模型列表
+    """
+    try:
+        from config.settings import get_supported_models
+        
+        supported_models = get_supported_models()
+        return {
+            "supported_models": supported_models,
+            "count": len(supported_models)
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting supported models: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get supported models: {str(e)}"
         ) 

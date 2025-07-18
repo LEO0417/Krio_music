@@ -19,7 +19,7 @@ import time
 import asyncio
 import logging
 from enum import Enum
-from typing import Optional, Dict, Any, Union
+from typing import Optional, Dict, Any, Union, List
 from datetime import datetime
 from pathlib import Path
 import json
@@ -33,7 +33,11 @@ from config.settings import (
     MODELS_DIR, 
     DEFAULT_MODEL, 
     MODEL_SETTINGS,
-    SYSTEM_SETTINGS
+    SYSTEM_SETTINGS,
+    get_model_config,
+    is_model_supported,
+    get_supported_models,
+    validate_model_requirements
 )
 from api.errors import ModelLoadError, ModelInferenceError, ResourceLimitExceededError
 
@@ -171,6 +175,20 @@ class ModelManager:
                     return True
                 
                 model_name = model_name or DEFAULT_MODEL
+                
+                # 验证模型是否支持
+                if not is_model_supported(model_name):
+                    raise ModelLoadError(f"Model {model_name} is not supported. Supported models: {get_supported_models()}")
+                
+                # 验证系统要求
+                validation = validate_model_requirements(model_name)
+                if not validation["valid"]:
+                    raise ResourceLimitExceededError(f"Model requirements not met: {validation['errors']}")
+                
+                if validation["warnings"]:
+                    for warning in validation["warnings"]:
+                        logger.warning(warning)
+                
                 self.model_info.name = model_name
                 self.model_info.status = ModelStatus.LOADING
                 self.model_info.error_message = None
@@ -211,6 +229,43 @@ class ModelManager:
                 else:
                     raise ModelLoadError(f"Unexpected error loading model: {e}")
     
+    def _get_model_cache_path(self, model_name: str) -> Path:
+        """
+        获取模型缓存路径
+        
+        Args:
+            model_name: 模型名称
+            
+        Returns:
+            Path: 模型缓存路径
+        """
+        # 将模型名称转换为安全的文件名
+        safe_name = model_name.replace("/", "_").replace("\\", "_")
+        return self.models_dir / safe_name
+    
+    def _is_model_cached(self, model_name: str) -> bool:
+        """
+        检查模型是否已缓存
+        
+        Args:
+            model_name: 模型名称
+            
+        Returns:
+            bool: 如果模型已缓存返回True
+        """
+        cache_path = self._get_model_cache_path(model_name)
+        # 检查必要的模型文件是否存在
+        required_files = ["config.json", "pytorch_model.bin", "tokenizer.json"]
+        
+        if not cache_path.exists():
+            return False
+            
+        for file_name in required_files:
+            if not (cache_path / file_name).exists():
+                return False
+                
+        return True
+    
     def _load_model_sync(self, model_name: str, device: str):
         """
         同步加载模型（在后台线程中运行）
@@ -220,26 +275,44 @@ class ModelManager:
             device: 目标设备
         """
         try:
+            cache_path = self._get_model_cache_path(model_name)
+            
+            # 检查模型是否已缓存
+            if self._is_model_cached(model_name):
+                logger.info(f"Loading model from cache: {cache_path}")
+                model_path = str(cache_path)
+            else:
+                logger.info(f"Model not cached, downloading from Hugging Face: {model_name}")
+                model_path = model_name
+                
+                # 确保缓存目录存在
+                cache_path.mkdir(parents=True, exist_ok=True)
+            
             # 加载处理器
             logger.info("Loading processor...")
-            self.processor = AutoProcessor.from_pretrained(model_name)
+            self.processor = AutoProcessor.from_pretrained(
+                model_path,
+                cache_dir=str(cache_path) if not self._is_model_cached(model_name) else None
+            )
             
             # 加载模型
             logger.info("Loading model...")
             if device == "cuda":
                 # GPU加载，使用半精度以节省内存
                 self.model = MusicgenForConditionalGeneration.from_pretrained(
-                    model_name,
+                    model_path,
                     torch_dtype=torch.float16,
                     device_map="auto",
-                    low_cpu_mem_usage=True
+                    low_cpu_mem_usage=True,
+                    cache_dir=str(cache_path) if not self._is_model_cached(model_name) else None
                 )
             else:
                 # CPU加载
                 self.model = MusicgenForConditionalGeneration.from_pretrained(
-                    model_name,
+                    model_path,
                     torch_dtype=torch.float32,
-                    low_cpu_mem_usage=True
+                    low_cpu_mem_usage=True,
+                    cache_dir=str(cache_path) if not self._is_model_cached(model_name) else None
                 )
                 self.model = self.model.to(device)
             
@@ -249,9 +322,116 @@ class ModelManager:
             # 计算模型大小
             self.model_info.model_size = self._calculate_model_size()
             
+            # 如果是首次下载，保存模型到缓存
+            if not self._is_model_cached(model_name):
+                self._save_model_to_cache(model_name, cache_path)
+            
         except Exception as e:
             logger.error(f"Error in _load_model_sync: {e}")
             raise ModelLoadError(f"Failed to load model components: {e}")
+    
+    def _save_model_to_cache(self, model_name: str, cache_path: Path):
+        """
+        保存模型到缓存
+        
+        Args:
+            model_name: 模型名称
+            cache_path: 缓存路径
+        """
+        try:
+            logger.info(f"Saving model to cache: {cache_path}")
+            
+            # 保存模型
+            if self.model is not None:
+                self.model.save_pretrained(str(cache_path))
+            
+            # 保存处理器
+            if self.processor is not None:
+                self.processor.save_pretrained(str(cache_path))
+            
+            # 创建缓存信息文件
+            cache_info = {
+                "model_name": model_name,
+                "cached_at": datetime.now().isoformat(),
+                "model_size_mb": self.model_info.model_size,
+                "device": self.model_info.device
+            }
+            
+            with open(cache_path / "cache_info.json", "w") as f:
+                json.dump(cache_info, f, indent=2)
+            
+            logger.info("Model saved to cache successfully")
+            
+        except Exception as e:
+            logger.warning(f"Failed to save model to cache: {e}")
+    
+    def get_cached_models(self) -> List[Dict[str, Any]]:
+        """
+        获取已缓存的模型列表
+        
+        Returns:
+            List[Dict[str, Any]]: 缓存的模型信息列表
+        """
+        cached_models = []
+        
+        if not self.models_dir.exists():
+            return cached_models
+        
+        for model_dir in self.models_dir.iterdir():
+            if model_dir.is_dir():
+                cache_info_path = model_dir / "cache_info.json"
+                if cache_info_path.exists():
+                    try:
+                        with open(cache_info_path, "r") as f:
+                            cache_info = json.load(f)
+                        
+                        # 计算缓存大小
+                        cache_size = sum(
+                            f.stat().st_size for f in model_dir.rglob("*") if f.is_file()
+                        ) // (1024 * 1024)  # 转换为MB
+                        
+                        cache_info["cache_size_mb"] = cache_size
+                        cache_info["cache_path"] = str(model_dir)
+                        cached_models.append(cache_info)
+                        
+                    except Exception as e:
+                        logger.warning(f"Failed to read cache info for {model_dir}: {e}")
+        
+        return cached_models
+    
+    def clear_model_cache(self, model_name: str = None) -> bool:
+        """
+        清理模型缓存
+        
+        Args:
+            model_name: 要清理的模型名称，为None时清理所有缓存
+            
+        Returns:
+            bool: 清理是否成功
+        """
+        try:
+            if model_name:
+                # 清理指定模型的缓存
+                cache_path = self._get_model_cache_path(model_name)
+                if cache_path.exists():
+                    import shutil
+                    shutil.rmtree(str(cache_path))
+                    logger.info(f"Cleared cache for model: {model_name}")
+                else:
+                    logger.info(f"No cache found for model: {model_name}")
+            else:
+                # 清理所有缓存
+                if self.models_dir.exists():
+                    import shutil
+                    shutil.rmtree(str(self.models_dir))
+                    self.models_dir.mkdir(parents=True, exist_ok=True)
+                    logger.info("Cleared all model caches")
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to clear model cache: {e}")
+            return False
     
     def _calculate_model_size(self) -> int:
         """
@@ -436,6 +616,70 @@ class ModelManager:
                 resource_info["gpu"] = {"error": str(e)}
         
         return resource_info
+    
+    def get_model_configuration(self, model_name: str = None) -> Dict[str, Any]:
+        """
+        获取模型配置信息
+        
+        Args:
+            model_name: 模型名称，默认使用当前加载的模型
+            
+        Returns:
+            Dict[str, Any]: 模型配置信息
+        """
+        model_name = model_name or self.model_info.name or DEFAULT_MODEL
+        
+        config = get_model_config(model_name)
+        if not config:
+            return {"error": f"No configuration found for model {model_name}"}
+        
+        return {
+            "model_name": model_name,
+            "supported": is_model_supported(model_name),
+            "config": config,
+            "validation": validate_model_requirements(model_name),
+            "cached": self._is_model_cached(model_name),
+            "cache_path": str(self._get_model_cache_path(model_name))
+        }
+    
+    def get_cache_statistics(self) -> Dict[str, Any]:
+        """
+        获取缓存统计信息
+        
+        Returns:
+            Dict[str, Any]: 缓存统计信息
+        """
+        cached_models = self.get_cached_models()
+        
+        total_cache_size = sum(model.get("cache_size_mb", 0) for model in cached_models)
+        max_cache_size_mb = MODEL_SETTINGS.get("max_cache_size_gb", 10.0) * 1024
+        
+        return {
+            "cache_enabled": MODEL_SETTINGS.get("cache_enabled", True),
+            "cache_directory": str(self.models_dir),
+            "cached_models_count": len(cached_models),
+            "total_cache_size_mb": total_cache_size,
+            "max_cache_size_mb": max_cache_size_mb,
+            "cache_usage_percent": (total_cache_size / max_cache_size_mb * 100) if max_cache_size_mb > 0 else 0,
+            "cached_models": cached_models
+        }
+    
+    def get_all_model_info(self) -> Dict[str, Any]:
+        """
+        获取所有模型相关信息
+        
+        Returns:
+            Dict[str, Any]: 综合模型信息
+        """
+        return {
+            "current_model": self.get_model_status(),
+            "supported_models": get_supported_models(),
+            "cache_statistics": self.get_cache_statistics(),
+            "system_requirements": {
+                model: validate_model_requirements(model) 
+                for model in get_supported_models()
+            }
+        }
 
 # 全局模型管理器实例
 model_manager = ModelManager() 

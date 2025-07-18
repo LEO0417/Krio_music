@@ -112,11 +112,15 @@ async def settings():
 from api.base import router as base_router
 from api.system import router as system_router
 from api.models import router as models_router
+from api.generation import router as generation_router
+from api.audio import router as audio_router
 
 # Register routers
 app.include_router(base_router, prefix=API_V1_PREFIX)
 app.include_router(system_router, prefix=f"{API_V1_PREFIX}/system", tags=["System"])
 app.include_router(models_router, prefix=f"{API_V1_PREFIX}/models", tags=["Models"])
+app.include_router(generation_router, prefix=f"{API_V1_PREFIX}/generate", tags=["Generation"])
+app.include_router(audio_router, prefix=f"{API_V1_PREFIX}/audio", tags=["Audio"])
 
 # Mount static files for audio output
 audio_path = Path(AUDIO_DIR)

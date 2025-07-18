@@ -44,6 +44,7 @@ class ErrorCode:
     MODEL_INFERENCE_ERROR = "MODEL_INFERENCE_ERROR"
     RESOURCE_LIMIT_EXCEEDED = "RESOURCE_LIMIT_EXCEEDED"
     AUDIO_PROCESSING_ERROR = "AUDIO_PROCESSING_ERROR"
+    PARAMETER_VALIDATION_ERROR = "PARAMETER_VALIDATION_ERROR"
     UNAUTHORIZED = "UNAUTHORIZED"
     FORBIDDEN = "FORBIDDEN"
 
@@ -97,6 +98,11 @@ class ResourceLimitExceededError(Exception):
 
 class AudioProcessingError(Exception):
     """Exception raised when audio processing fails."""
+    pass
+
+
+class ValidationError(Exception):
+    """Exception raised when parameter validation fails."""
     pass
 
 
@@ -258,6 +264,25 @@ def setup_error_handlers(app: FastAPI) -> None:
         
         return JSONResponse(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content=error_response
+        )
+    
+    @app.exception_handler(ValidationError)
+    async def validation_error_handler(request: Request, exc: ValidationError) -> JSONResponse:
+        """Handle parameter validation errors."""
+        error_response = create_error_response(
+            code=ErrorCode.PARAMETER_VALIDATION_ERROR,
+            message="Parameter validation failed",
+            status_code=status.HTTP_400_BAD_REQUEST,
+            details=str(exc),
+            suggestion="Check your request parameters and try again"
+        )
+        
+        # Log the error
+        logger.warning(f"Parameter validation error: {str(exc)}")
+        
+        return JSONResponse(
+            status_code=status.HTTP_400_BAD_REQUEST,
             content=error_response
         )
     
