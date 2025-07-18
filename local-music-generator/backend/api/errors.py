@@ -100,6 +100,16 @@ class AudioProcessingError(Exception):
     pass
 
 
+class ModelDownloadError(Exception):
+    """Exception raised when model download fails."""
+    pass
+
+
+class ModelCacheError(Exception):
+    """Exception raised when model cache operations fail."""
+    pass
+
+
 def setup_error_handlers(app: FastAPI) -> None:
     """
     Configure error handlers for the FastAPI application.
@@ -255,6 +265,44 @@ def setup_error_handlers(app: FastAPI) -> None:
         
         # Log the error
         logger.error(f"Audio processing error: {str(exc)}")
+        
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content=error_response
+        )
+    
+    @app.exception_handler(ModelDownloadError)
+    async def model_download_error_handler(request: Request, exc: ModelDownloadError) -> JSONResponse:
+        """Handle model download errors."""
+        error_response = create_error_response(
+            code="MODEL_DOWNLOAD_ERROR",
+            message="Failed to download the model",
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            details=str(exc),
+            suggestion="Check internet connection and try again"
+        )
+        
+        # Log the error
+        logger.error(f"Model download error: {str(exc)}")
+        
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content=error_response
+        )
+    
+    @app.exception_handler(ModelCacheError)
+    async def model_cache_error_handler(request: Request, exc: ModelCacheError) -> JSONResponse:
+        """Handle model cache errors."""
+        error_response = create_error_response(
+            code="MODEL_CACHE_ERROR",
+            message="Error with model cache operations",
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            details=str(exc),
+            suggestion="Clear cache and try again"
+        )
+        
+        # Log the error
+        logger.error(f"Model cache error: {str(exc)}")
         
         return JSONResponse(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
