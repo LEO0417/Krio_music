@@ -1,18 +1,50 @@
 import React from 'react';
-import { Routes, Route } from 'react-router-dom';
+import { ThemeProvider } from '@/context/ThemeContext';
+import { AppStateProvider, useAppState } from '@/context/AppStateContext';
+import Layout from '@/components/Layout';
+import HomePage from '@/pages/HomePage';
+import LibraryPage from '@/pages/LibraryPage';
+import HistoryPage from '@/pages/HistoryPage';
+import SettingsPage from '@/pages/SettingsPage';
+import { PageTransition } from '@/components/animations';
 import './styles/App.css';
 
-// Import pages here when created
-// import HomePage from './pages/HomePage';
+const AppContent: React.FC = () => {
+  const { state } = useAppState();
+  
+  const renderCurrentPage = () => {
+    switch (state.currentPage) {
+      case '/':
+        return <HomePage />;
+      case '/library':
+        return <LibraryPage />;
+      case '/history':
+        return <HistoryPage />;
+      case '/settings':
+        return <SettingsPage />;
+      default:
+        return <HomePage />;
+    }
+  };
+
+  return (
+    <div className="app">
+      <Layout>
+        <PageTransition pageKey={state.currentPage} direction="fade">
+          {renderCurrentPage()}
+        </PageTransition>
+      </Layout>
+    </div>
+  );
+};
 
 const App: React.FC = () => {
   return (
-    <div className="app">
-      <Routes>
-        <Route path="/" element={<div>Local Music Generator</div>} />
-        {/* Add more routes as needed */}
-      </Routes>
-    </div>
+    <ThemeProvider>
+      <AppStateProvider>
+        <AppContent />
+      </AppStateProvider>
+    </ThemeProvider>
   );
 };
 

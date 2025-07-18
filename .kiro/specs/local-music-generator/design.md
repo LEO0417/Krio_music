@@ -125,13 +125,18 @@ graph TD
 
 #### 1. 模型管理 API
 
-- `GET /api/model/status` - 获取模型状态
-- `POST /api/model/load` - 加载模型
-- `POST /api/model/unload` - 卸载模型
+- `GET /api/models/status` - 获取模型状态
+- `POST /api/models/load` - 加载模型
+- `POST /api/models/unload` - 卸载模型
+- `GET /api/models/info` - 获取模型详细信息
+- `GET /api/models/supported` - 获取支持的模型列表
+- `GET /api/models/cache` - 获取模型缓存信息
+- `DELETE /api/models/cache` - 清理模型缓存
+- `GET /api/models/validate/{model_name}` - 验证模型要求
 
 #### 2. 音乐生成 API
 
-- `POST /api/generate` - 生成音乐
+- `POST /api/generate/generate` - 生成音乐
   - 请求体：
     ```json
     {
@@ -153,15 +158,26 @@ graph TD
     }
     ```
 
-- `GET /api/generate/{id}/status` - 获取生成状态
-- `GET /api/generate/{id}/result` - 获取生成结果
+- `GET /api/generate/status/{task_id}` - 获取生成状态
+- `GET /api/generate/result/{task_id}` - 获取生成结果
+- `DELETE /api/generate/cancel/{task_id}` - 取消生成任务
+- `GET /api/generate/tasks` - 获取活动任务列表
+- `GET /api/generate/history` - 获取任务历史记录
+- `DELETE /api/generate/history` - 清理任务历史记录
+- `GET /api/generate/validate` - 验证生成请求参数
+- `GET /api/generate/stats` - 获取生成统计信息
 
 #### 3. 音频管理 API
 
 - `GET /api/audio/list` - 获取音频列表
-- `GET /api/audio/{id}` - 获取特定音频
+- `GET /api/audio/{id}` - 获取特定音频元数据
+- `PUT /api/audio/{id}` - 更新音频元数据
 - `DELETE /api/audio/{id}` - 删除音频
-- `PUT /api/audio/{id}/metadata` - 更新音频元数据
+- `GET /api/audio/{id}/download` - 下载音频文件
+- `POST /api/audio/{id}/convert` - 转换音频格式
+- `GET /api/audio/{id}/analyze` - 分析音频特征
+- `GET /api/audio/stats/overview` - 获取音频统计信息
+- `DELETE /api/audio/cleanup` - 清理旧音频文件
 
 #### 4. 系统 API
 

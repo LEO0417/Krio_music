@@ -1,0 +1,229 @@
+version: '3.8'
+
+services:
+  # Main application
+  app:
+    build: .
+    container_name: local-music-generator
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - ENVIRONMENT=production
+      - DEBUG=false
+      - LOG_LEVEL=INFO
+      - HOST=0.0.0.0
+      - PORT=8000
+      - FRONTEND_URL=http://localhost:3000
+      - MODEL_NAME=facebook/musicgen-small
+      - MODEL_CACHE_DIR=/app/data/models
+      - AUTO_LOAD_MODEL=true
+      - USE_GPU=false
+      - AUDIO_OUTPUT_DIR=/app/data/audio
+      - AUDIO_FORMAT=mp3
+      - AUDIO_SAMPLE_RATE=44100
+      - AUDIO_QUALITY=high
+      - MAX_MEMORY_MB=4096
+      - MAX_GENERATION_TIME=300
+      - ENABLE_CACHING=true
+      - CACHE_SIZE=100
+      - ENABLE_MONITORING=true
+      - MONITORING_INTERVAL=1.0
+      - RESOURCE_HISTORY_SIZE=1000
+      - ALLOWED_ORIGINS=http://localhost:3000
+      - ENABLE_CORS=true
+    volumes:
+      - app_data:/app/data
+      - app_logs:/app/logs
+      - app_cache:/app/cache
+    networks:
+      - app_network
+    healthcheck:
+      test: ["CMD", "python", "/app/health_check.py"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    depends_on:
+      - redis
+    deploy:
+      resources:
+        limits:
+          memory: 6G
+        reservations:
+          memory: 2G
+
+  # Redis for caching
+  redis:
+    image: redis:7-alpine
+    container_name: local-music-generator-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - app_network
+    command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Nginx reverse proxy
+  nginx:
+    image: nginx:alpine
+    container_name: local-music-generator-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./ssl:/etc/nginx/ssl:ro
+      - nginx_logs:/var/log/nginx
+    networks:
+      - app_network
+    depends_on:
+      - app
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Monitoring with Prometheus
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: local-music-generator-prometheus
+    restart: unless-stopped
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    networks:
+      - app_network
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=200h'
+      - '--web.enable-lifecycle'
+    profiles:
+      - monitoring
+
+  # Grafana for visualization
+  grafana:
+    image: grafana/grafana:latest
+    container_name: local-music-generator-grafana
+    restart: unless-stopped
+    ports:
+      - "3001:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+    networks:
+      - app_network
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    depends_on:
+      - prometheus
+    profiles:
+      - monitoring
+
+  # Log aggregation with ELK stack
+  elasticsearch:
+    image: elasticsearch:8.8.0
+    container_name: local-music-generator-elasticsearch
+    restart: unless-stopped
+    environment:
+      - discovery.type=single-node
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+      - xpack.security.enabled=false
+    volumes:
+      - elasticsearch_data:/usr/share/elasticsearch/data
+    networks:
+      - app_network
+    profiles:
+      - logging
+
+  logstash:
+    image: logstash:8.8.0
+    container_name: local-music-generator-logstash
+    restart: unless-stopped
+    volumes:
+      - ./logstash.conf:/usr/share/logstash/pipeline/logstash.conf:ro
+      - app_logs:/app/logs:ro
+    networks:
+      - app_network
+    depends_on:
+      - elasticsearch
+    profiles:
+      - logging
+
+  kibana:
+    image: kibana:8.8.0
+    container_name: local-music-generator-kibana
+    restart: unless-stopped
+    ports:
+      - "5601:5601"
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+    networks:
+      - app_network
+    depends_on:
+      - elasticsearch
+    profiles:
+      - logging
+
+  # Backup service
+  backup:
+    image: alpine:latest
+    container_name: local-music-generator-backup
+    restart: "no"
+    volumes:
+      - app_data:/backup/data:ro
+      - app_logs:/backup/logs:ro
+      - ./backups:/backups
+    networks:
+      - app_network
+    command: |
+      sh -c "
+        apk add --no-cache tar gzip
+        timestamp=$$(date +%Y%m%d_%H%M%S)
+        tar -czf /backups/backup_$$timestamp.tar.gz -C /backup .
+        echo 'Backup completed: backup_$$timestamp.tar.gz'
+        # Clean up old backups (keep last 7 days)
+        find /backups -name 'backup_*.tar.gz' -mtime +7 -delete
+      "
+    profiles:
+      - backup
+
+networks:
+  app_network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+
+volumes:
+  app_data:
+    driver: local
+  app_logs:
+    driver: local
+  app_cache:
+    driver: local
+  redis_data:
+    driver: local
+  nginx_logs:
+    driver: local
+  prometheus_data:
+    driver: local
+  grafana_data:
+    driver: local
+  elasticsearch_data:
+    driver: local
